@@ -165,14 +165,20 @@ class Gumroad {
         UserDefaults.standard.consecutiveNetworkFailureDays = 0
         UserDefaults.standard.set(nil, forKey: "lastNetworkFailureDay")
 
-        // Inform user with a blocking popup
+        // Inform user without blocking main thread
         DispatchQueue.main.async {
             let alert = NSAlert()
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")
             alert.messageText = "AirSync+ Unregistered"
             alert.informativeText = reason
-            alert.runModal()
+            
+            if let window = NSApp.windows.first(where: { $0.isKeyWindow && $0.isVisible }) ?? NSApp.windows.first(where: { $0.isVisible }) {
+                alert.beginSheetModal(for: window, completionHandler: nil)
+            } else {
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            }
         }
     }
 
@@ -184,7 +190,9 @@ class Gumroad {
 
         // If no stored key, behave as before
         guard let key = appState.licenseDetails?.key, !key.isEmpty else {
-            appState.isPlus = false
+            if !TrialManager.shared.isTrialActive {
+                appState.isPlus = false
+            }
             Gumroad().incrementInvalidLicenseFailCount() // treat as invalid (no key)
             UserDefaults.standard.lastLicenseCheckDate = now
             return
@@ -208,11 +216,13 @@ class Gumroad {
                 print("[gumroad] License valid — daily success recorded.")
             } else {
                 // Invalid/expired/cancelled/license-limit — disable immediately
-                appState.isPlus = false
+                if !TrialManager.shared.isTrialActive {
+                    appState.isPlus = false
+                }
                 Gumroad().incrementInvalidLicenseFailCount()
                 // Reset network failure streak because this is not a network failure
                 UserDefaults.standard.consecutiveNetworkFailureDays = 0
-                print("[gumroad] License invalid or expired — disabled Plus.")
+                print("[gumroad] License invalid or expired — disabled Plus (unless trial active).")
             }
         } catch let error as LicenseCheckError {
             // Network/server failure: do not disable Plus today
@@ -286,6 +296,7 @@ class Gumroad {
         if let lastSuccess = UserDefaults.standard.lastLicenseSuccessfulCheckDate,
            Calendar.current.isDateInToday(lastSuccess) {
             print("[gumroad] License already successfully validated today — skipping network call.")
+            appState.isPlus = true
             return
         }
 
